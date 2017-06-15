@@ -1,10 +1,11 @@
-import sys
 import threading
 import time
 # from multiprocessing import Queue
 import psycopg2
+import psycopg2.extras
+from psycopg2.extensions import AsIs
 
-set_item_no = set()
+accident_id_set = set()
 
 
 def connect_db(database):
@@ -16,7 +17,7 @@ def connect_db(database):
 
 
 def prompt_user(conn):
-    cursor = conn.cursor()
+    dict_cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     while True:
         print("\n1: Show all unclear events")
         print("2: Enter correct location of event")
@@ -25,8 +26,9 @@ def prompt_user(conn):
         command = input("Command: ")
 
         if command == "1":
-            cursor.execute("SELECT * FROM accident_event WHERE accident_status='not clear';")
-            for row in cursor.fetchall():
+            dict_cur.execute("SELECT * FROM accident_event WHERE accident_status='not clear';")
+            result = dict_cur.fetchall()
+            for row in result:
                 print(row)
 
         elif command == "2":
@@ -34,10 +36,10 @@ def prompt_user(conn):
             try:
                 event_id = int(event_id)
             except ValueError:
-                print("You must enter a integer")
+                print("Please enter a valid integer")
                 continue
-            cursor.execute("SELECT count(*) FROM accident_event WHERE accident_id = %s", (event_id, ))
-            if cursor.fetchall()[0][0] == 0:
+            dict_cur.execute("SELECT count(*) FROM accident_event WHERE accident_id = %s", (event_id, ))
+            if dict_cur.fetchall()[0][0] == 0:
                 print("No such event id")
                 continue
 
@@ -47,14 +49,16 @@ def prompt_user(conn):
                 longitude = float(longitude)
                 latitude = float(latitude)
             except ValueError:
-                print("You must enter a float")
+                print("Please enter a valid float")
                 continue
 
             try:
-                sql = """UPDATE accident_event
-                SET actual_longitude = %s, actual_latitude= %s
-                WHERE accident_id = %s;"""
-                cursor.execute(sql, (longitude, latitude, event_id))
+                sql = """
+                    UPDATE accident_event
+                    SET actual_longitude = %s, actual_latitude= %s, accident_status = 'clear'
+                    WHERE accident_id = %s;
+                """
+                dict_cur.execute(sql, (longitude, latitude, event_id))
             except psycopg2.Error as e:
                 print(e.diag.message_primary, end='\n\n')
                 continue
@@ -62,11 +66,11 @@ def prompt_user(conn):
         elif command == "3":
             sql = input("\nEnter your sql command here: ")
             try:
-                cursor.execute(sql)
+                dict_cur.execute(sql)
             except psycopg2.Error as e:
                 print(e.diag.message_primary, end='\n\n')
                 continue
-            for row in cursor.fetchall():
+            for row in dict_cur.fetchall():
                 print(row)
 
         else:
@@ -74,34 +78,114 @@ def prompt_user(conn):
 
 
 def scan_view(conn):
-    global set_item_no
-    cursor = conn.cursor()
+    global accident_id_set
+    dict_cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     while True:
         time.sleep(1)
-        sql = "SELECT * FROM accident_status_information;"
-        cursor.execute(sql)
-        rows = cursor.fetchall()
-        for row in rows:
-            pass
-            item_no = row[1]
-            if item_no not in set_item_no:
-                print("The accident", item_no, "is not in original set_item_no")
-                # insert into Accident Event
-                # calculate the closest HC/PO
+        sql = """
+            SELECT
+            accident_id,
+            item_no,
+            latitude as actual_longitude,
+            longitude as actual_latitude,
+            road_id,
+            road_direction,
+            milage,
+            road_type,
+            road_section_name
+            FROM accident_status_information
+            WHERE status_of_the_event = 'not clear'
+            -- We can't access table in db1 while in db2
+            -- AND accident_id NOT IN (
+            --     SELECT accident_id FROM db1.accident_event
+            -- );
+        """
+        dict_cur.execute(sql)
+        rows = dict_cur.fetchall()
+        # print(table)
 
-                set_item_no.add(item_no)
-                pass
+        for row in rows:
+            if row['accident_id'] in accident_id_set:
+                continue
+            accident_id_set.add(row['accident_id'])
+
+            # new Accident Event
+            columns = row.keys()
+            values = [row[column] for column in columns]
+            sql = "INSERT INTO accident_event (%s) VALUES (%s)"
+            sql = dict_cur.mogrify(sql, (AsIs(', '.join(columns)), tuple(values)))
+            dict_cur.execute(sql)
+
+            sensor_latitude = row['actual_latitude']
+            sensor_longitude = row['actual_longitude']
+
+            # calculate the closest HC
+            sql = """
+                SELECT health_center_id, health_center_name,
+                |/((latitude - %s)^2 + (longitude - %s)^2) AS distance
+                FROM health_center
+                WHERE |/((latitude - %s)^2 + (longitude - %s)^2) IN (
+                    SELECT MIN(|/((latitude - %s)^2 + (longitude - %s)^2))
+                    FROM health_center
+                );
+            """
+            dict_cur.execute(sql, (sensor_latitude, sensor_longitude,
+                                   sensor_latitude, sensor_longitude,
+                                   sensor_latitude, sensor_longitude))
+            closest_HC_name = dict_cur.fetchall()[0]['health_center_name']
+
+            # calculate the closest PO
+            sql = """
+                SELECT chinese_name, english_name,
+                |/((latitude - %s)^2 + (longitude - %s)^2) AS distance
+                FROM police_station
+                WHERE |/((latitude - %s)^2 + (longitude - %s)^2) IN (
+                    SELECT MIN(|/((latitude - %s)^2 + (longitude - %s)^2))
+                    FROM police_station
+                );
+            """
+            dict_cur.execute(sql, (sensor_latitude, sensor_longitude,
+                                   sensor_latitude, sensor_longitude,
+                                   sensor_latitude, sensor_longitude))
+            closest_PO_name = dict_cur.fetchall()[0]['english_name']
+
+            # new reponse_unit
+            sql = """
+                INSERT INTO response_unit (
+                    accident_id,
+                    item_no,
+                    response_police_station,
+                    response_health_center,
+                    road_id,
+                    road_direction,
+                    milage
+                ) values (%s, %s, %s, %s, %s, %s)
+            """
+            sql = dict_cur.mogrify(sql, (
+                row['accident_id'],
+                row['item_no'],
+                closest_PO_name,
+                closest_HC_name,
+                row['road_id'],
+                row['road_direction'],
+                row['milage']
+            ))
+            dict_cur.execute(sql)
 
 
 def foobar():
     conn1 = connect_db(database="db1")
     input_thread = threading.Thread(target=prompt_user, args=(conn1, ))
     input_thread.daemon = True
-    input_thread.start()
 
     conn2 = connect_db(database="db2")
     scan_thread = threading.Thread(target=scan_view, args=(conn2, ))
     scan_thread.daemon = True
+
+    # Need initialize set_accident_id: add all accident_id from accident_event of db1
+    pass
+
+    input_thread.start()
     scan_thread.start()
 
     input_thread.join()

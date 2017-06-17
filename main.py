@@ -43,8 +43,8 @@ def prompt_user(conn):
                 print("No such event id")
                 continue
 
-            longitude = input("Actual longitude: ")
             latitude = input("Actual latitude: ")
+            longitude = input("Actual longitude: ")
             try:
                 longitude = float(longitude)
                 latitude = float(latitude)
@@ -77,9 +77,10 @@ def prompt_user(conn):
             print("There's not command called " + command)
 
 
-def scan_view(conn):
+def scan_view(conn1, conn2):
     global accident_id_set
-    dict_cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    dict_cur2 = conn2.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    dict_cur1 = conn1.cursor(cursor_factory=psycopg2.extras.DictCursor)
     while True:
         time.sleep(1)
         sql = """
@@ -100,8 +101,8 @@ def scan_view(conn):
             --     SELECT accident_id FROM db1.accident_event
             -- );
         """
-        dict_cur.execute(sql)
-        rows = dict_cur.fetchall()
+        dict_cur2.execute(sql)
+        rows = dict_cur2.fetchall()
         # print(table)
 
         for row in rows:
@@ -111,10 +112,13 @@ def scan_view(conn):
 
             # new Accident Event
             columns = row.keys()
+            columns = [column for column in columns]
             values = [row[column] for column in columns]
-            sql = "INSERT INTO accident_event (%s) VALUES (%s)"
-            sql = dict_cur.mogrify(sql, (AsIs(', '.join(columns)), tuple(values)))
-            dict_cur.execute(sql)
+
+            sql = "INSERT INTO accident_event (%s) VALUES %s"
+            sql = dict_cur1.mogrify(sql, (AsIs(', '.join(columns)), tuple(values)))
+            # print(sql)
+            dict_cur1.execute(sql)
 
             sensor_latitude = row['actual_latitude']
             sensor_longitude = row['actual_longitude']
@@ -129,10 +133,10 @@ def scan_view(conn):
                     FROM health_center
                 );
             """
-            dict_cur.execute(sql, (sensor_latitude, sensor_longitude,
-                                   sensor_latitude, sensor_longitude,
-                                   sensor_latitude, sensor_longitude))
-            closest_HC_name = dict_cur.fetchall()[0]['health_center_name']
+            dict_cur1.execute(sql, (sensor_latitude, sensor_longitude,
+                                    sensor_latitude, sensor_longitude,
+                                    sensor_latitude, sensor_longitude))
+            closest_HC_name = dict_cur1.fetchall()[0]['health_center_name']
 
             # calculate the closest PO
             sql = """
@@ -144,10 +148,10 @@ def scan_view(conn):
                     FROM police_station
                 );
             """
-            dict_cur.execute(sql, (sensor_latitude, sensor_longitude,
-                                   sensor_latitude, sensor_longitude,
-                                   sensor_latitude, sensor_longitude))
-            closest_PO_name = dict_cur.fetchall()[0]['english_name']
+            dict_cur1.execute(sql, (sensor_latitude, sensor_longitude,
+                                    sensor_latitude, sensor_longitude,
+                                    sensor_latitude, sensor_longitude))
+            closest_PO_name = dict_cur1.fetchall()[0]['english_name']
 
             # new reponse_unit
             sql = """
@@ -159,9 +163,9 @@ def scan_view(conn):
                     road_id,
                     road_direction,
                     milage
-                ) values (%s, %s, %s, %s, %s, %s)
+                ) values (%s, %s, %s, %s, %s, %s, %s)
             """
-            sql = dict_cur.mogrify(sql, (
+            sql = dict_cur1.mogrify(sql, (
                 row['accident_id'],
                 row['item_no'],
                 closest_PO_name,
@@ -170,7 +174,9 @@ def scan_view(conn):
                 row['road_direction'],
                 row['milage']
             ))
-            dict_cur.execute(sql)
+            dict_cur1.execute(sql)
+        conn1.commit()
+        conn2.commit()
 
 
 def foobar():
@@ -179,7 +185,7 @@ def foobar():
     input_thread.daemon = True
 
     conn2 = connect_db(database="db2")
-    scan_thread = threading.Thread(target=scan_view, args=(conn2, ))
+    scan_thread = threading.Thread(target=scan_view, args=(conn1, conn2))
     scan_thread.daemon = True
 
     # Need initialize set_accident_id: add all accident_id from accident_event of db1

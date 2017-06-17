@@ -20,10 +20,11 @@ def prompt_user(conn):
     dict_cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     while True:
         print("\n1: Show all unclear events")
-        print("2: Show all response units")
-        print("3: Enter correct location of event")
-        print("4: Enter sql command directly")
-        print("5: Quit")
+        print("2: Show all events")
+        print("3: Show all response units")
+        print("4: Enter correct location of event")
+        print("5: Enter sql command directly")
+        print("6: Quit")
         command = input("Command: ")
 
         if command == "1":
@@ -33,12 +34,18 @@ def prompt_user(conn):
                 print(row)
 
         elif command == "2":
-            dict_cur.execute("SELECT * FROM response_unit;")
+            dict_cur.execute("SELECT * FROM accident_event;")
             result = dict_cur.fetchall()
             for row in result:
                 print(row)
 
         elif command == "3":
+            dict_cur.execute("SELECT * FROM response_unit;")
+            result = dict_cur.fetchall()
+            for row in result:
+                print(row)
+
+        elif command == "4":
             event_id = input("Enter the event id: ")
             try:
                 event_id = int(event_id)
@@ -50,8 +57,8 @@ def prompt_user(conn):
                 print("No such event id")
                 continue
 
-            latitude = input("Actual latitude: ")
             longitude = input("Actual longitude: ")
+            latitude = input("Actual latitude: ")
             try:
                 longitude = float(longitude)
                 latitude = float(latitude)
@@ -70,7 +77,7 @@ def prompt_user(conn):
                 print(e.diag.message_primary, end='\n\n')
                 continue
 
-        elif command == "4":
+        elif command == "5":
             sql = input("\nEnter your sql command here: ")
             try:
                 dict_cur.execute(sql)
@@ -79,8 +86,9 @@ def prompt_user(conn):
                 continue
             for row in dict_cur.fetchall():
                 print(row)
+            conn.commit()
 
-        elif command == "5":
+        elif command == "6":
             return
         else:
             print("There's not command called " + command)

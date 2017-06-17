@@ -20,9 +20,10 @@ def prompt_user(conn):
     dict_cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     while True:
         print("\n1: Show all unclear events")
-        print("2: Enter correct location of event")
-        print("3: Enter sql command directly")
-        print("4: Quit")
+        print("2: Show all response units")
+        print("3: Enter correct location of event")
+        print("4: Enter sql command directly")
+        print("5: Quit")
         command = input("Command: ")
 
         if command == "1":
@@ -32,6 +33,12 @@ def prompt_user(conn):
                 print(row)
 
         elif command == "2":
+            dict_cur.execute("SELECT * FROM response_unit;")
+            result = dict_cur.fetchall()
+            for row in result:
+                print(row)
+
+        elif command == "3":
             event_id = input("Enter the event id: ")
             try:
                 event_id = int(event_id)
@@ -63,7 +70,7 @@ def prompt_user(conn):
                 print(e.diag.message_primary, end='\n\n')
                 continue
 
-        elif command == "3":
+        elif command == "4":
             sql = input("\nEnter your sql command here: ")
             try:
                 dict_cur.execute(sql)
@@ -73,7 +80,7 @@ def prompt_user(conn):
             for row in dict_cur.fetchall():
                 print(row)
 
-        elif command == "4":
+        elif command == "5":
             return
         else:
             print("There's not command called " + command)
@@ -96,15 +103,17 @@ def scan_view(conn1, conn2):
             SELECT
             accident_id,
             item_no,
-            latitude as actual_longitude,
-            longitude as actual_latitude,
+            latitude as actual_latitude,
+            longitude as actual_longitude,
             road_id,
             road_direction,
             milage,
             road_type,
-            road_section_name
+            road_section_name,
+            status_of_the_event as accident_status
             FROM accident_status_information
-            WHERE status_of_the_event = 'not clear'
+            -- WHERE status_of_the_event = 'not clear'
+
             -- We can't access table in db1 while in db2
             -- AND accident_id NOT IN (
             --     SELECT accident_id FROM db1.accident_event

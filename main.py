@@ -73,6 +73,8 @@ def prompt_user(conn):
             for row in dict_cur.fetchall():
                 print(row)
 
+        elif command == "4":
+            return
         else:
             print("There's not command called " + command)
 
@@ -81,6 +83,13 @@ def scan_view(conn1, conn2):
     global accident_id_set
     dict_cur2 = conn2.cursor(cursor_factory=psycopg2.extras.DictCursor)
     dict_cur1 = conn1.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
+    # Need initialize set_accident_id: add all accident_id from accident_event of db1
+    dict_cur1.execute("SELECT accident_id FROM accident_event")
+    for row in dict_cur1.fetchall():
+        accident_id_set.add(row['accident_id'])
+
+    # start scanning
     while True:
         time.sleep(1)
         sql = """
@@ -187,9 +196,6 @@ def foobar():
     conn2 = connect_db(database="db2")
     scan_thread = threading.Thread(target=scan_view, args=(conn1, conn2))
     scan_thread.daemon = True
-
-    # Need initialize set_accident_id: add all accident_id from accident_event of db1
-    pass
 
     input_thread.start()
     scan_thread.start()
